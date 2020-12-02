@@ -69,18 +69,18 @@ wsServer.on('request', (req) => {
   const { path } = req.resourceURL;
   const splitted = path.split('/');
   splitted.shift();
-  const id = splitted[0];
+  const token = splitted[0];
 
   const conn = req.accept(null, req.origin);
   conn.on('message', (data) => {
     if(data.type === 'utf8') {
-      console.log(`Client ${id} << ${data.utf8Data}`);
+      console.log(`Client with token ${token} << ${data.utf8Data}`);
 
       const message = JSON.parse(data.utf8Data);
-      const destId = message.id;
+      const destId = message.token;
       const dest = clients[destId];
       if(dest) {
-        message.id = id;
+        message.token = token;
         const data = JSON.stringify(message);
         console.log(`Client ${destId} >> ${data}`);
         dest.send(data);
@@ -91,11 +91,11 @@ wsServer.on('request', (req) => {
     }
   });
   conn.on('close', () => {
-    delete clients[id];
-    console.error(`Client ${id} disconnected`);
+    delete clients[token];
+    console.error(`Client with token ${token} disconnected`);
   });
 
-  clients[id] = conn;
+  clients[token] = conn;
 });
 
 const endpoint = process.env.PORT || '8000';

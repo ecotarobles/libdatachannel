@@ -47,13 +47,13 @@ template <class T> weak_ptr<T> make_weak_ptr(shared_ptr<T> ptr) { return ptr; }
 unordered_map<string, shared_ptr<PeerConnection>> peerConnectionMap;
 unordered_map<string, shared_ptr<DataChannel>> dataChannelMap;
 
-string localId;
+string localToken;
 bool echoDataChannelMessages = false;
 
 shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
-						weak_ptr<WebSocket> wws, string id);
-void printReceived(bool echoed, string id, size_t length, string type);
-string randomId(size_t length);
+						weak_ptr<WebSocket> wws, string token);
+void printReceived(bool echoed, string token, size_t length, string type);
+string randomToken(size_t length);
 
 int main(int argc, char **argv) try {
 	auto params = std::make_unique<Cmdline>(argc, argv);
@@ -74,8 +74,8 @@ int main(int argc, char **argv) try {
 		config.iceServers.emplace_back(stunServer);
 	}
 
-	localId = randomId(4);
-	cout << "The local ID is: " << localId << endl;
+	localToken = randomToken(4);
+	cout << "The local ID is: " << localToken << endl;
 	echoDataChannelMessages = params->echoDataChannelMessages();
 	cout << "Received data channel messages will be "
 		<< (echoDataChannelMessages ? "echoed back to sender" : "printed to stdout") << endl;
@@ -103,10 +103,10 @@ int main(int argc, char **argv) try {
 
 		json message = json::parse(get<string>(data));
 
-		auto it = message.find("id");
+		auto it = message.find("token");
 		if (it == message.end())
 			return;
-		string id = it->get<string>();
+		string token = it->get<string>();
 
 		it = message.find("type");
 		if (it == message.end())
@@ -114,11 +114,11 @@ int main(int argc, char **argv) try {
 		string type = it->get<string>();
 
 		shared_ptr<PeerConnection> pc;
-		if (auto jt = peerConnectionMap.find(id); jt != peerConnectionMap.end()) {
+		if (auto jt = peerConnectionMap.find(token); jt != peerConnectionMap.end()) {
 			pc = jt->second;
 		} else if (type == "offer") {
-			cout << "Answering to " + id << endl;
-			pc = createPeerConnection(config, ws, id);
+			cout << "Answering to " + token << endl;
+			pc = createPeerConnection(config, ws, token);
 		} else {
 			return;
 		}
@@ -138,7 +138,7 @@ int main(int argc, char **argv) try {
 		wsPrefix = "ws://";
 	}
 	const string url = wsPrefix + params->webSocketServer() + ":" +
-	                   to_string(params->webSocketPort()) + "/" + localId;
+	                   to_string(params->webSocketPort()) + "/" + localToken;
 	cout << "Url is " << url << endl;
 	ws->open(url);
 
@@ -146,32 +146,32 @@ int main(int argc, char **argv) try {
 	wsFuture.get();
 
 	while (true) {
-		string id;
+		string token;
 		cout << "Enter a remote ID to send an offer:" << endl;
-		cin >> id;
+		cin >> token;
 		cin.ignore();
-		if (id.empty())
+		if (token.empty())
 			break;
-		if (id == localId)
+		if (token == localToken)
 			continue;
 
-		cout << "Offering to " + id << endl;
-		auto pc = createPeerConnection(config, ws, id);
+		cout << "Offering to " + token << endl;
+		auto pc = createPeerConnection(config, ws, token);
 
 		// We are the offerer, so create a data channel to initiate the process
 		const string label = "test";
 		cout << "Creating DataChannel with label \"" << label << "\"" << endl;
 		auto dc = pc->createDataChannel(label);
 
-		dc->onOpen([id, wdc = make_weak_ptr(dc)]() {
-			cout << "DataChannel from " << id << " open" << endl;
+		dc->onOpen([token, wdc = make_weak_ptr(dc)]() {
+			cout << "DataChannel from peer with " << token << " open" << endl;
 			if (auto dc = wdc.lock())
-				dc->send("Hello from " + localId);
+				dc->send("Hello from " + localToken);
 		});
 
-		dc->onClosed([id]() { cout << "DataChannel from " << id << " closed" << endl; });
+		dc->onClosed([token]() { cout << "DataChannel from peer with " << token << " closed" << endl; });
 
-		dc->onMessage([id, wdc = make_weak_ptr(dc)](variant<binary, string> data) {
+		dc->onMessage([token, wdc = make_weak_ptr(dc)](variant<binary, string> data) {
 			int len = holds_alternative<string>(data) ?
 					get<string>(data).length() : get<binary>(data).size();
 			if (echoDataChannelMessages) {
@@ -180,23 +180,23 @@ int main(int argc, char **argv) try {
 					dc->send(data);
 					echoed = true;
 				}
-				printReceived(echoed, id, len,
+				printReceived(echoed, token, len,
 					(holds_alternative<string>(data) ?  "text" : "binary"));
 			} else if (holds_alternative<string>(data)) {
 				if (len < 80) {
-					cout << "Message from " << id << " received: " <<
+					cout << "Message from peer with " << token << " received: " <<
 						get<string>(data) << endl;
 				} else {
-					cout << "Message from " << id << " received: " <<
+					cout << "Message from peer with " << token << " received: " <<
 						get<string>(data).substr(0,80) << "..." << endl;
 				}
 			} else {
-				cout << "Binary message from " << id << " received, size=" <<
+				cout << "Binary message from peer with " << token << " received, size=" <<
 					get<binary>(data).size() << endl;
 			}
 		});
 
-		dataChannelMap.emplace(id, dc);
+		dataChannelMap.emplace(token, dc);
 	}
 
 	cout << "Cleaning up..." << endl;
@@ -214,7 +214,7 @@ int main(int argc, char **argv) try {
 
 // Create and setup a PeerConnection
 shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
-						weak_ptr<WebSocket> wws, string id) {
+						weak_ptr<WebSocket> wws, string token) {
 	auto pc = make_shared<PeerConnection>(config);
 
 	pc->onStateChange([](PeerConnection::State state) { cout << "State: " << state << endl; });
@@ -222,16 +222,16 @@ shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
 	pc->onGatheringStateChange(
 	    [](PeerConnection::GatheringState state) { cout << "Gathering State: " << state << endl; });
 
-	pc->onLocalDescription([wws, id](Description description) {
+	pc->onLocalDescription([wws, token](Description description) {
 		json message = {
-		    {"id", id}, {"type", description.typeString()}, {"description", string(description)}};
+		    {"token", token}, {"type", description.typeString()}, {"description", string(description)}};
 
 		if (auto ws = wws.lock())
 			ws->send(message.dump());
 	});
 
-	pc->onLocalCandidate([wws, id](Candidate candidate) {
-		json message = {{"id", id},
+	pc->onLocalCandidate([wws, token](Candidate candidate) {
+		json message = {{"token", token},
 		                {"type", "candidate"},
 		                {"candidate", string(candidate)},
 		                {"mid", candidate.mid()}};
@@ -240,13 +240,13 @@ shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
 			ws->send(message.dump());
 	});
 
-	pc->onDataChannel([id](shared_ptr<DataChannel> dc) {
-		cout << "DataChannel from " << id << " received with label \"" << dc->label() << "\""
+	pc->onDataChannel([token](shared_ptr<DataChannel> dc) {
+		cout << "DataChannel from peer with " << token << " received with label \"" << dc->label() << "\""
 		     << endl;
 
-		dc->onClosed([id]() { cout << "DataChannel from " << id << " closed" << endl; });
+		dc->onClosed([token]() { cout << "DataChannel from peer with " << token << " closed" << endl; });
 
-		dc->onMessage([id, wdc = make_weak_ptr(dc)](variant<binary, string> data) {
+		dc->onMessage([token, wdc = make_weak_ptr(dc)](variant<binary, string> data) {
 			int len = holds_alternative<string>(data) ?
 					get<string>(data).length() : get<binary>(data).size();
 			if (echoDataChannelMessages) {
@@ -255,40 +255,40 @@ shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
 					dc->send(data);
 					echoed = true;
 				}
-				printReceived(echoed, id, len,
+				printReceived(echoed, token, len,
 					(holds_alternative<string>(data) ?  "text" : "binary"));
 			} else if (holds_alternative<string>(data)) {
 				if (len < 80) {
-					cout << "Message from " << id << " received: " <<
+					cout << "Message from peer with " << token << " received: " <<
 						get<string>(data) << endl;
 				} else {
-					cout << "Message from " << id << " received: " <<
+					cout << "Message from peer with " << token << " received: " <<
 						get<string>(data).substr(0,80) << "..." << endl;
 				}
 			} else {
-				cout << "Binary message from " << id << " received, size=" <<
+				cout << "Binary message from peer with " << token << " received, size=" <<
 					get<binary>(data).size() << endl;
 			}
 		});
 
-		dc->send("Hello from " + localId);
+		dc->send("Hello from peer with " + localToken);
 
-		dataChannelMap.emplace(id, dc);
+		dataChannelMap.emplace(token, dc);
 	});
 
-	peerConnectionMap.emplace(id, pc);
+	peerConnectionMap.emplace(token, pc);
 	return pc;
 };
 
 // Helper function to print received pings
-void printReceived(bool echoed, string id, size_t length, string type) {
+void printReceived(bool echoed, string token, size_t length, string type) {
 	static long count = 0;
 	static long freq = 100;
 	if (!(++count%freq)) {
-		cout << "Received " << count << " pings in total from " << id <<
+		cout << "Received " << count << " pings in total from peer with " << token <<
 			", most recent of type " << type << " and " <<
 			(echoed ? "" : "un") << "successfully echoed most recent ping " <<
-			"of size " << length << " back to " << id << endl;
+			"of size " << length << " back to " << token << endl;
 		if (count >= (freq * 10) && freq < 1000000) {
 			freq *= 10;
 		}
@@ -297,12 +297,12 @@ void printReceived(bool echoed, string id, size_t length, string type) {
 
 
 // Helper function to generate a random ID
-string randomId(size_t length) {
+string randomToken(size_t length) {
 	static const string characters(
 	    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
-	string id(length, '0');
+	string token(length, '0');
 	default_random_engine rng(random_device{}());
 	uniform_int_distribution<int> dist(0, int(characters.size() - 1));
-	generate(id.begin(), id.end(), [&]() { return characters.at(dist(rng)); });
-	return id;
+	generate(token.begin(), token.end(), [&]() { return characters.at(dist(rng)); });
+	return token;
 }
