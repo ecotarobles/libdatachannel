@@ -34,6 +34,7 @@ class Cmdline
 {
 private:
   /* parameters */
+  bool _e;
   bool _n;
   std::string _s;
   int _t;
@@ -56,6 +57,7 @@ public:
   /* return next (non-option) parameter */
   int next_param () { return _optind; }
 
+  bool echoDataChannelMessages () const { return _e; }
   bool noStun () const { return _n; }
   std::string stunServer () const { return _s; }
   int stunPort () const { return _t; }
