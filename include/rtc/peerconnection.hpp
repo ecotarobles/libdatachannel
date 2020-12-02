@@ -50,7 +50,14 @@ class SctpTransport;
 using certificate_ptr = std::shared_ptr<Certificate>;
 using future_certificate_ptr = std::shared_future<certificate_ptr>;
 
-class PeerConnection final : public std::enable_shared_from_this<PeerConnection> {
+struct RTC_CPP_EXPORT DataChannelInit {
+	Reliability reliability = {};
+	bool negotiated = false;
+	std::optional<uint16_t> id = nullopt;
+	string protocol = "";
+};
+
+class RTC_CPP_EXPORT PeerConnection final : public std::enable_shared_from_this<PeerConnection> {
 public:
 	enum class State : int {
 		New = RTC_NEW,
@@ -75,7 +82,7 @@ public:
 		HaveRemotePranswer = RTC_SIGNALING_HAVE_REMOTE_PRANSWER,
 	} rtcSignalingState;
 
-	PeerConnection(void);
+	PeerConnection();
 	PeerConnection(const Configuration &config);
 	~PeerConnection();
 
@@ -95,15 +102,14 @@ public:
 	bool getSelectedCandidatePair(Candidate *local, Candidate *remote);
 
 	void setLocalDescription(Description::Type type = Description::Type::Unspec);
+
 	void setRemoteDescription(Description description);
 	void addRemoteCandidate(Candidate candidate);
 
-	std::shared_ptr<DataChannel> addDataChannel(string label, string protocol = "",
-	                                            Reliability reliability = {});
+	std::shared_ptr<DataChannel> addDataChannel(string label, DataChannelInit init = {});
 
 	// Equivalent to calling addDataChannel() and setLocalDescription()
-	std::shared_ptr<DataChannel> createDataChannel(string label, string protocol = "",
-	                                               Reliability reliability = {});
+	std::shared_ptr<DataChannel> createDataChannel(string label, DataChannelInit init = {});
 
 	void onDataChannel(std::function<void(std::shared_ptr<DataChannel> dataChannel)> callback);
 	void onLocalDescription(std::function<void(Description description)> callback);
@@ -123,7 +129,7 @@ public:
 	void onTrack(std::function<void(std::shared_ptr<Track> track)> callback);
 
 private:
-	std::shared_ptr<IceTransport> initIceTransport(Description::Role role);
+	std::shared_ptr<IceTransport> initIceTransport();
 	std::shared_ptr<DtlsTransport> initDtlsTransport();
 	std::shared_ptr<SctpTransport> initSctpTransport();
 	void closeTransports();
@@ -133,9 +139,10 @@ private:
 	void forwardMessage(message_ptr message);
 	void forwardMedia(message_ptr message);
 	void forwardBufferedAmount(uint16_t stream, size_t amount);
+	std::optional<std::string> getMidFromSsrc(uint32_t ssrc);
 
 	std::shared_ptr<DataChannel> emplaceDataChannel(Description::Role role, string label,
-	                                                string protocol, Reliability reliability);
+	                                                DataChannelInit init);
 	std::shared_ptr<DataChannel> findDataChannel(uint16_t stream);
 	void iterateDataChannels(std::function<void(std::shared_ptr<DataChannel> channel)> func);
 	void openDataChannels();
@@ -150,6 +157,8 @@ private:
 	void processLocalCandidate(Candidate candidate);
 	void processRemoteDescription(Description description);
 	void processRemoteCandidate(Candidate candidate);
+	string localBundleMid() const;
+
 	void triggerDataChannel(std::weak_ptr<DataChannel> weakDataChannel);
 	void triggerTrack(std::shared_ptr<Track> track);
 	bool changeState(State state);
@@ -173,11 +182,12 @@ private:
 	std::shared_ptr<DtlsTransport> mDtlsTransport;
 	std::shared_ptr<SctpTransport> mSctpTransport;
 
-	std::unordered_map<unsigned int, std::weak_ptr<DataChannel>> mDataChannels; // by stream ID
-	std::unordered_map<string, std::weak_ptr<Track>> mTracks;                   // by mid
+	std::unordered_map<uint16_t, std::weak_ptr<DataChannel>> mDataChannels; // by stream ID
+	std::unordered_map<string, std::weak_ptr<Track>> mTracks;               // by mid
+	std::vector<std::weak_ptr<Track>> mTrackLines;                          // by SDP order
 	std::shared_mutex mDataChannelsMutex, mTracksMutex;
 
-	std::unordered_map<unsigned int, string> mMidFromPayloadType; // cache
+	std::unordered_map<uint32_t, string> mMidFromSsrc; // cache
 
 	std::atomic<State> mState;
 	std::atomic<GatheringState> mGatheringState;
@@ -195,8 +205,8 @@ private:
 
 } // namespace rtc
 
-std::ostream &operator<<(std::ostream &out, rtc::PeerConnection::State state);
-std::ostream &operator<<(std::ostream &out, rtc::PeerConnection::GatheringState state);
-std::ostream &operator<<(std::ostream &out, rtc::PeerConnection::SignalingState state);
+RTC_CPP_EXPORT std::ostream &operator<<(std::ostream &out, rtc::PeerConnection::State state);
+RTC_CPP_EXPORT std::ostream &operator<<(std::ostream &out, rtc::PeerConnection::GatheringState state);
+RTC_CPP_EXPORT std::ostream &operator<<(std::ostream &out, rtc::PeerConnection::SignalingState state);
 
 #endif

@@ -28,9 +28,15 @@
 #endif
 
 #ifdef _WIN32
+#define RTC_CPP_EXPORT __declspec(dllexport)
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0602 // Windows 8
 #endif
+#ifdef _MSC_VER
+#pragma warning(disable:4251) // disable "X needs to have dll-interface..."
+#endif
+#else
+#define RTC_CPP_EXPORT
 #endif
 
 #include "log.hpp"
@@ -102,12 +108,12 @@ private:
 	std::function<void()> function;
 };
 
-template <typename... P> class synchronized_callback {
+template <typename... Args> class synchronized_callback {
 public:
 	synchronized_callback() = default;
 	synchronized_callback(synchronized_callback &&cb) { *this = std::move(cb); }
 	synchronized_callback(const synchronized_callback &cb) { *this = cb; }
-	synchronized_callback(std::function<void(P...)> func) { *this = std::move(func); }
+	synchronized_callback(std::function<void(Args...)> func) { *this = std::move(func); }
 	~synchronized_callback() { *this = nullptr; }
 
 	synchronized_callback &operator=(synchronized_callback &&cb) {
@@ -123,16 +129,16 @@ public:
 		return *this;
 	}
 
-	synchronized_callback &operator=(std::function<void(P...)> func) {
+	synchronized_callback &operator=(std::function<void(Args...)> func) {
 		std::lock_guard lock(mutex);
 		callback = std::move(func);
 		return *this;
 	}
 
-	void operator()(P... args) const {
+	void operator()(Args... args) const {
 		std::lock_guard lock(mutex);
 		if (callback)
-			callback(args...);
+			callback(std::move(args)...);
 	}
 
 	operator bool() const {
@@ -140,8 +146,12 @@ public:
 		return callback ? true : false;
 	}
 
+	std::function<void(Args...)> wrap() const {
+		return [this](Args... args) { (*this)(std::move(args)...); };
+	}
+
 private:
-	std::function<void(P...)> callback;
+	std::function<void(Args...)> callback;
 	mutable std::recursive_mutex mutex;
 };
 } // namespace rtc

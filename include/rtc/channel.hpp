@@ -28,13 +28,14 @@
 
 namespace rtc {
 
-class Channel {
+class RTC_CPP_EXPORT Channel {
 public:
 	Channel() = default;
 	virtual ~Channel() = default;
 
 	virtual void close() = 0;
 	virtual bool send(message_variant data) = 0; // returns false if buffered
+	virtual bool send(const byte *data, size_t size) = 0;
 
 	virtual bool isOpen() const = 0;
 	virtual bool isClosed() const = 0;
@@ -54,7 +55,8 @@ public:
 
 	// Extended API
 	virtual std::optional<message_variant> receive() = 0; // only if onMessage unset
-	virtual size_t availableAmount() const; // total size available to receive
+	virtual std::optional<message_variant> peek() = 0;    // only if onMessage unset
+	virtual size_t availableAmount() const;               // total size available to receive
 	void onAvailable(std::function<void()> callback);
 
 protected:
@@ -81,4 +83,3 @@ private:
 } // namespace rtc
 
 #endif // RTC_CHANNEL_H
-

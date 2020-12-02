@@ -20,8 +20,8 @@
 #define RTC_ICE_TRANSPORT_H
 
 #include "candidate.hpp"
-#include "description.hpp"
 #include "configuration.hpp"
+#include "description.hpp"
 #include "include.hpp"
 #include "peerconnection.hpp"
 #include "transport.hpp"
@@ -35,6 +35,7 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <mutex>
 
 namespace rtc {
 
@@ -45,8 +46,8 @@ public:
 	using candidate_callback = std::function<void(const Candidate &candidate)>;
 	using gathering_state_callback = std::function<void(GatheringState state)>;
 
-	IceTransport(const Configuration &config, Description::Role role,
-	             candidate_callback candidateCallback, state_callback stateChangeCallback,
+	IceTransport(const Configuration &config, candidate_callback candidateCallback,
+	             state_callback stateChangeCallback,
 	             gathering_state_callback gatheringStateChangeCallback);
 	~IceTransport();
 
@@ -55,7 +56,7 @@ public:
 	Description getLocalDescription(Description::Type type) const;
 	void setRemoteDescription(const Description &description);
 	bool addRemoteCandidate(const Candidate &candidate);
-	void gatherLocalCandidates();
+	void gatherLocalCandidates(string mid);
 
 	std::optional<string> getLocalAddress() const;
 	std::optional<string> getRemoteAddress() const;
@@ -99,6 +100,8 @@ private:
 	std::unique_ptr<GMainLoop, void (*)(GMainLoop *)> mMainLoop;
 	std::thread mMainLoopThread;
 	guint mTimeoutId = 0;
+	std::mutex mOutgoingMutex;
+	unsigned int mOutgoingDscp;
 
 	static string AddressToString(const NiceAddress &addr);
 

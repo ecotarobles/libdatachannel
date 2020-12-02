@@ -36,6 +36,7 @@
 namespace rtc {
 
 using std::shared_ptr;
+using namespace std::placeholders;
 
 WebSocket::WebSocket(std::optional<Configuration> config)
     : mConfig(config ? std::move(*config) : Configuration()),
@@ -117,6 +118,10 @@ void WebSocket::remoteClose() {
 
 bool WebSocket::send(message_variant data) { return outgoing(make_message(std::move(data))); }
 
+bool WebSocket::send(const byte *data, size_t size) {
+	return outgoing(make_message(data, data + size));
+}
+
 bool WebSocket::isOpen() const { return mState == State::Open; }
 
 bool WebSocket::isClosed() const { return mState == State::Closed; }
@@ -125,9 +130,20 @@ size_t WebSocket::maxMessageSize() const { return DEFAULT_MAX_MESSAGE_SIZE; }
 
 std::optional<message_variant> WebSocket::receive() {
 	while (auto next = mRecvQueue.tryPop()) {
-		message_ptr message = std::move(*next);
+		message_ptr message = *next;
 		if (message->type != Message::Control)
 			return to_variant(std::move(*message));
+	}
+	return nullopt;
+}
+
+std::optional<message_variant> WebSocket::peek() {
+	while (auto next = mRecvQueue.peek()) {
+		message_ptr message = *next;
+		if (message->type != Message::Control)
+			return to_variant(std::move(*message));
+
+		mRecvQueue.tryPop();
 	}
 	return nullopt;
 }
@@ -240,12 +256,13 @@ shared_ptr<TlsTransport> WebSocket::initTlsTransport() {
 		if (!mConfig.disableTlsVerification) {
 			PLOG_WARNING << "TLS certificate verification with root CA is not supported on Windows";
 		}
-		transport = std::make_shared<TlsTransport>(lower, mHost, stateChangeCallback);
+		transport = std::make_shared<TlsTransport>(lower, mHostname, stateChangeCallback);
 #else
 		if (mConfig.disableTlsVerification)
-			transport = std::make_shared<TlsTransport>(lower, mHost, stateChangeCallback);
+			transport = std::make_shared<TlsTransport>(lower, mHostname, stateChangeCallback);
 		else
-			transport = std::make_shared<VerifiedTlsTransport>(lower, mHost, stateChangeCallback);
+			transport =
+			    std::make_shared<VerifiedTlsTransport>(lower, mHostname, stateChangeCallback);
 #endif
 
 		std::atomic_store(&mTlsTransport, transport);
@@ -274,8 +291,14 @@ shared_ptr<WsTransport> WebSocket::initWsTransport() {
 		shared_ptr<Transport> lower = std::atomic_load(&mTlsTransport);
 		if (!lower)
 			lower = std::atomic_load(&mTcpTransport);
+
+		WsTransport::Configuration wsConfig = {};
+		wsConfig.host = mHost;
+		wsConfig.path = mPath;
+		wsConfig.protocols = mConfig.protocols;
+
 		auto transport = std::make_shared<WsTransport>(
-		    lower, mHost, mPath, weak_bind(&WebSocket::incoming, this, _1),
+			lower, wsConfig, weak_bind(&WebSocket::incoming, this, _1),
 		    [this, weak_this = weak_from_this()](State state) {
 			    auto shared_this = weak_this.lock();
 			    if (!shared_this)

@@ -17,15 +17,17 @@
  */
 
 #include "wstransport.hpp"
+#include "base64.hpp"
 #include "tcptransport.hpp"
 #include "tlstransport.hpp"
-#include "base64.hpp"
 
 #if RTC_ENABLE_WEBSOCKET
 
 #include <chrono>
+#include <iterator>
 #include <list>
 #include <map>
+#include <numeric>
 #include <random>
 #include <regex>
 
@@ -52,17 +54,17 @@ using std::to_string;
 using random_bytes_engine =
     std::independent_bits_engine<std::default_random_engine, CHAR_BIT, unsigned short>;
 
-WsTransport::WsTransport(std::shared_ptr<Transport> lower, string host, string path,
+WsTransport::WsTransport(std::shared_ptr<Transport> lower, Configuration config,
                          message_callback recvCallback, state_callback stateCallback)
-    : Transport(lower, std::move(stateCallback)), mHost(std::move(host)), mPath(std::move(path)) {
+    : Transport(lower, std::move(stateCallback)), mConfig(std::move(config)) {
 	onRecv(recvCallback);
 
 	PLOG_DEBUG << "Initializing WebSocket transport";
 
-	if (mHost.empty())
+	if (mConfig.host.empty())
 		throw std::invalid_argument("WebSocket HTTP host cannot be empty");
 
-	if (mPath.empty())
+	if (mConfig.path.empty())
 		throw std::invalid_argument("WebSocket HTTP path cannot be empty");
 }
 
@@ -153,7 +155,7 @@ void WsTransport::close() {
 }
 
 bool WsTransport::sendHttpRequest() {
-	PLOG_DEBUG << "Sending WebSocket HTTP request for path " << mPath;
+	PLOG_DEBUG << "Sending WebSocket HTTP request for path " << mConfig.path;
 	changeState(State::Connecting);
 
 	auto seed = static_cast<unsigned int>(system_clock::now().time_since_epoch().count());
@@ -163,18 +165,27 @@ bool WsTransport::sendHttpRequest() {
 	auto k = reinterpret_cast<uint8_t *>(key.data());
 	std::generate(k, k + key.size(), [&]() { return uint8_t(generator()); });
 
-	const string request = "GET " + mPath +
+	string appendHeader = "";
+	if (mConfig.protocols.size() > 0) {
+		appendHeader +=
+		    "Sec-WebSocket-Protocol: " +
+		    std::accumulate(mConfig.protocols.begin(), mConfig.protocols.end(), string(),
+		                    [](const string &a, const string &b) -> string {
+			                    return a + (a.length() > 0 ? "," : "") + b;
+		                    }) +
+		    "\r\n";
+	}
+
+	const string request = "GET " + mConfig.path +
 	                       " HTTP/1.1\r\n"
 	                       "Host: " +
-	                       mHost +
+	                       mConfig.host +
 	                       "\r\n"
 	                       "Connection: Upgrade\r\n"
 	                       "Upgrade: websocket\r\n"
 	                       "Sec-WebSocket-Version: 13\r\n"
 	                       "Sec-WebSocket-Key: " +
-	                       to_base64(key) +
-	                       "\r\n"
-	                       "\r\n";
+	                       to_base64(key) + "\r\n" + std::move(appendHeader) + "\r\n";
 
 	auto data = reinterpret_cast<const byte *>(request.data());
 	auto size = request.size();
@@ -227,8 +238,14 @@ size_t WsTransport::readHttpResponse(const byte *buffer, size_t size) {
 	}
 
 	auto h = headers.find("upgrade");
-	if (h == headers.end() || h->second != "websocket")
-		throw std::runtime_error("WebSocket update header missing or mismatching");
+	if (h == headers.end())
+		throw std::runtime_error("WebSocket update header missing");
+
+	string upgrade;
+	std::transform(h->second.begin(), h->second.end(), std::back_inserter(upgrade),
+	               [](char c) { return std::tolower(c); });
+	if (upgrade != "websocket")
+		throw std::runtime_error("WebSocket update header mismatching: " + h->second);
 
 	h = headers.find("sec-websocket-accept");
 	if (h == headers.end())

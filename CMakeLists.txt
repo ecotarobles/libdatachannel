@@ -1,21 +1,20 @@
 cmake_minimum_required(VERSION 3.7)
 project(libdatachannel
-	VERSION 0.9.4
+	VERSION 0.10.4
 	LANGUAGES CXX)
 set(PROJECT_DESCRIPTION "WebRTC Data Channels Library")
 
 # Options
 option(USE_GNUTLS "Use GnuTLS instead of OpenSSL" OFF)
 option(USE_NICE "Use libnice instead of libjuice" OFF)
+option(USE_SYSTEM_SRTP "Use system libSRTP" OFF)
 option(NO_WEBSOCKET "Disable WebSocket support" OFF)
+option(NO_MEDIA "Disable media transport support" OFF)
 option(NO_EXAMPLES "Disable examples" OFF)
 option(NO_TESTS "Disable tests build" OFF)
 option(WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 option(RSA_KEY_BITS_2048 "Use 2048-bit RSA key instead of 3072-bit" OFF)
 option(CAPI_STDCALL "Set calling convention of C API callbacks stdcall" OFF)
-# Option USE_SRTP defaults to AUTO (enabled if libSRTP is found, else disabled)
-set(USE_SRTP AUTO CACHE STRING "Use libSRTP and enable media support")
-set_property(CACHE USE_SRTP PROPERTY STRINGS AUTO ON OFF)
 
 if(USE_NICE)
 	option(USE_JUICE "Use libjuice" OFF)
@@ -27,6 +26,9 @@ if(USE_GNUTLS)
 	option(USE_NETTLE "Use Nettle in libjuice" ON)
 else()
 	option(USE_NETTLE "Use Nettle in libjuice" OFF)
+	if(NOT USE_SYSTEM_SRTP)
+		option(ENABLE_OPENSSL "Enable OpenSSL crypto engine for SRTP" ON)
+	endif()
 endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -34,7 +36,7 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
 
 if(WIN32)
 	add_definitions(-DWIN32_LEAN_AND_MEAN)
-	if (MSVC)
+	if(MSVC)
 		add_definitions(-DNOMINMAX)
 		add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 		add_definitions(-D_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
@@ -90,6 +92,7 @@ set(LIBDATACHANNEL_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/include/rtc/reliability.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/rtc/rtc.h
 	${CMAKE_CURRENT_SOURCE_DIR}/include/rtc/rtc.hpp
+	${CMAKE_CURRENT_SOURCE_DIR}/include/rtc/rtp.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/rtc/track.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/rtc/websocket.hpp
 )
@@ -112,17 +115,15 @@ set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
 add_subdirectory(deps/plog)
 
 option(sctp_build_programs 0)
+option(sctp_build_shared_lib 0)
 add_subdirectory(deps/usrsctp EXCLUDE_FROM_ALL)
 if (MSYS OR MINGW)
 	target_compile_definitions(usrsctp PUBLIC -DSCTP_STDINT_INCLUDE=<stdint.h>)
-	target_compile_definitions(usrsctp-static PUBLIC -DSCTP_STDINT_INCLUDE=<stdint.h>)
 endif()
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_options(usrsctp PRIVATE -Wno-error=format-truncation)
-	target_compile_options(usrsctp-static PRIVATE -Wno-error=format-truncation)
 endif()
 add_library(Usrsctp::Usrsctp ALIAS usrsctp)
-add_library(Usrsctp::UsrsctpStatic ALIAS usrsctp-static)
 
 if (NO_WEBSOCKET)
 	add_library(datachannel SHARED
@@ -153,45 +154,45 @@ target_include_directories(datachannel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includ
 target_include_directories(datachannel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/rtc)
 target_include_directories(datachannel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(datachannel PUBLIC Threads::Threads plog::plog)
-target_link_libraries(datachannel PRIVATE Usrsctp::UsrsctpStatic)
+target_link_libraries(datachannel PRIVATE Usrsctp::Usrsctp)
 
 target_include_directories(datachannel-static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(datachannel-static PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/rtc)
 target_include_directories(datachannel-static PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(datachannel-static PUBLIC Threads::Threads plog::plog)
-target_link_libraries(datachannel-static PRIVATE Usrsctp::UsrsctpStatic)
+target_link_libraries(datachannel-static PRIVATE Usrsctp::Usrsctp)
 
 if(WIN32)
-	target_link_libraries(datachannel PRIVATE ws2_32) # winsock2
-	target_link_libraries(datachannel-static PRIVATE ws2_32) # winsock2
+	target_link_libraries(datachannel PUBLIC ws2_32) # winsock2
+	target_link_libraries(datachannel-static PUBLIC ws2_32) # winsock2
 endif()
 
-if(USE_SRTP STREQUAL "AUTO")
-	find_package(SRTP)
-	if(SRTP_FOUND)
-		message(STATUS "LibSRTP found, compiling with media transport")
-	else()
-		message(STATUS "LibSRTP NOT found, compiling WITHOUT media transport")
-	endif()
-elseif(USE_SRTP)
-	find_package(SRTP REQUIRED)
-endif()
-
-if(USE_SRTP AND SRTP_FOUND)
-	if(NOT TARGET SRTP::SRTP)
-		add_library(SRTP::SRTP UNKNOWN IMPORTED)
-		set_target_properties(SRTP::SRTP PROPERTIES
-			INTERFACE_INCLUDE_DIRECTORIES ${SRTP_INCLUDE_DIRS}
-			IMPORTED_LINK_INTERFACE_LANGUAGES C
-			IMPORTED_LOCATION ${SRTP_LIBRARIES})
-	endif()
-	target_compile_definitions(datachannel PUBLIC RTC_ENABLE_MEDIA=1)
-	target_compile_definitions(datachannel-static PUBLIC RTC_ENABLE_MEDIA=1)
-	target_link_libraries(datachannel PRIVATE SRTP::SRTP)
-	target_link_libraries(datachannel-static PRIVATE SRTP::SRTP)
-else()
+if(NO_MEDIA)
 	target_compile_definitions(datachannel PUBLIC RTC_ENABLE_MEDIA=0)
 	target_compile_definitions(datachannel-static PUBLIC RTC_ENABLE_MEDIA=0)
+else()
+	target_compile_definitions(datachannel PUBLIC RTC_ENABLE_MEDIA=1)
+	target_compile_definitions(datachannel-static PUBLIC RTC_ENABLE_MEDIA=1)
+	if(USE_SYSTEM_SRTP)
+		find_package(SRTP REQUIRED)
+		if(NOT TARGET SRTP::SRTP)
+			add_library(SRTP::SRTP UNKNOWN IMPORTED)
+			set_target_properties(SRTP::SRTP PROPERTIES
+				INTERFACE_INCLUDE_DIRECTORIES ${SRTP_INCLUDE_DIRS}
+				IMPORTED_LINK_INTERFACE_LANGUAGES C
+				IMPORTED_LOCATION ${SRTP_LIBRARIES})
+		endif()
+		target_compile_definitions(datachannel PRIVATE RTC_SYSTEM_SRTP=1)
+		target_compile_definitions(datachannel-static PRIVATE RTC_SYSTEM_SRTP=1)
+		target_link_libraries(datachannel PRIVATE SRTP::SRTP)
+		target_link_libraries(datachannel-static PRIVATE SRTP::SRTP)
+	else()
+		add_subdirectory(deps/libsrtp EXCLUDE_FROM_ALL)
+		target_compile_definitions(datachannel PRIVATE RTC_SYSTEM_SRTP=0)
+		target_compile_definitions(datachannel-static PRIVATE RTC_SYSTEM_SRTP=0)
+		target_link_libraries(datachannel PRIVATE srtp2)
+		target_link_libraries(datachannel-static PRIVATE srtp2)
+	endif()
 endif()
 
 if (USE_GNUTLS)
@@ -267,35 +268,32 @@ if(NOT NO_TESTS)
 	set_target_properties(datachannel-tests PROPERTIES
 		VERSION ${PROJECT_VERSION}
 		CXX_STANDARD 17)
-	set_target_properties(datachannel-tests PROPERTIES OUTPUT_NAME tests)
-	target_include_directories(datachannel-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-	if(WIN32)
-		target_link_libraries(datachannel-tests datachannel-static) # DLL exports only the C API
-	else()
-		target_link_libraries(datachannel-tests datachannel)
+	if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore") # Prevent a bug in manifest generation for UWP
+		set_target_properties(datachannel-tests PROPERTIES OUTPUT_NAME tests)
 	endif()
+	target_include_directories(datachannel-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+	target_link_libraries(datachannel-tests datachannel)
 
 	# Benchmark
 	add_executable(datachannel-benchmark test/benchmark.cpp)
 	set_target_properties(datachannel-benchmark PROPERTIES
 		VERSION ${PROJECT_VERSION}
 		CXX_STANDARD 17)
-	set_target_properties(datachannel-benchmark PROPERTIES OUTPUT_NAME benchmark)
+	if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore") # Prevent a bug in manifest generation for UWP
+		set_target_properties(datachannel-benchmark PROPERTIES OUTPUT_NAME benchmark)
+	endif()
 	target_compile_definitions(datachannel-benchmark PRIVATE BENCHMARK_MAIN=1)
 	target_include_directories(datachannel-benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-	if(WIN32)
-		target_link_libraries(datachannel-benchmark datachannel-static) # DLL exports only the C API
-	else()
-		target_link_libraries(datachannel-benchmark datachannel)
-	endif()
+	target_link_libraries(datachannel-benchmark datachannel)
 endif()
 
 # Examples
-if(NOT NO_EXAMPLES)
+if(NOT NO_EXAMPLES AND NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
 	set(JSON_BuildTests OFF CACHE INTERNAL "")
 	add_subdirectory(deps/json)
 	add_subdirectory(examples/client)
 	add_subdirectory(examples/media)
+	add_subdirectory(examples/sfu-media)
 	add_subdirectory(examples/copy-paste)
 	add_subdirectory(examples/copy-paste-capi)
 endif()

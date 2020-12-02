@@ -46,11 +46,12 @@ using std::chrono::system_clock;
 
 namespace rtc {
 
-IceTransport::IceTransport(const Configuration &config, Description::Role role,
-                           candidate_callback candidateCallback, state_callback stateChangeCallback,
+IceTransport::IceTransport(const Configuration &config, candidate_callback candidateCallback,
+                           state_callback stateChangeCallback,
                            gathering_state_callback gatheringStateChangeCallback)
-    : Transport(nullptr, std::move(stateChangeCallback)), mRole(role), mMid("0"),
-      mGatheringState(GatheringState::New), mCandidateCallback(std::move(candidateCallback)),
+    : Transport(nullptr, std::move(stateChangeCallback)), mRole(Description::Role::ActPass),
+      mMid("0"), mGatheringState(GatheringState::New),
+      mCandidateCallback(std::move(candidateCallback)),
       mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
       mAgent(nullptr, nullptr) {
 
@@ -130,9 +131,7 @@ IceTransport::~IceTransport() {
 	mAgent.reset();
 }
 
-bool IceTransport::stop() {
-	return Transport::stop();
-}
+bool IceTransport::stop() { return Transport::stop(); }
 
 Description::Role IceTransport::role() const { return mRole; }
 
@@ -141,12 +140,20 @@ Description IceTransport::getLocalDescription(Description::Type type) const {
 	if (juice_get_local_description(mAgent.get(), sdp, JUICE_MAX_SDP_STRING_LEN) < 0)
 		throw std::runtime_error("Failed to generate local SDP");
 
-	return Description(string(sdp), type, mRole);
+	// RFC 5763: The endpoint that is the offerer MUST use the setup attribute value of
+	// setup:actpass.
+	// See https://tools.ietf.org/html/rfc5763#section-5
+	return Description(string(sdp), type,
+	                   type == Description::Type::Offer ? Description::Role::ActPass : mRole);
 }
 
 void IceTransport::setRemoteDescription(const Description &description) {
-	mRole = description.role() == Description::Role::Active ? Description::Role::Passive
-	                                                        : Description::Role::Active;
+	if (mRole == Description::Role::ActPass)
+		mRole = description.role() == Description::Role::Active ? Description::Role::Passive
+		                                                        : Description::Role::Active;
+	if (mRole == description.role())
+		throw std::logic_error("Incompatible roles with remote description");
+
 	mMid = description.bundleMid();
 	if (juice_set_remote_description(mAgent.get(),
 	                                 description.generateApplicationSdp("\r\n").c_str()) < 0)
@@ -161,7 +168,9 @@ bool IceTransport::addRemoteCandidate(const Candidate &candidate) {
 	return juice_add_remote_candidate(mAgent.get(), string(candidate).c_str()) >= 0;
 }
 
-void IceTransport::gatherLocalCandidates() {
+void IceTransport::gatherLocalCandidates(string mid) {
+	mMid = std::move(mid);
+
 	// Change state now as candidates calls can be synchronous
 	changeGatheringState(GatheringState::InProgress);
 
@@ -191,7 +200,7 @@ bool IceTransport::getSelectedCandidatePair(Candidate *local, Candidate *remote)
 	char sdpLocal[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
 	char sdpRemote[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
 	if (juice_get_selected_candidates(mAgent.get(), sdpLocal, JUICE_MAX_CANDIDATE_SDP_STRING_LEN,
-	                                 sdpRemote, JUICE_MAX_CANDIDATE_SDP_STRING_LEN) == 0) {
+	                                  sdpRemote, JUICE_MAX_CANDIDATE_SDP_STRING_LEN) == 0) {
 		if (local) {
 			*local = Candidate(sdpLocal, mMid);
 			local->resolve(Candidate::ResolveMode::Simple);
@@ -215,8 +224,10 @@ bool IceTransport::send(message_ptr message) {
 }
 
 bool IceTransport::outgoing(message_ptr message) {
-	return juice_send(mAgent.get(), reinterpret_cast<const char *>(message->data()),
-	                  message->size()) >= 0;
+	// Explicit Congestion Notification takes the least-significant 2 bits of the DS field
+	int ds = int(message->dscp << 2);
+	return juice_send_diffserv(mAgent.get(), reinterpret_cast<const char *>(message->data()),
+	                           message->size(), ds) >= 0;
 }
 
 void IceTransport::changeGatheringState(GatheringState state) {
@@ -316,13 +327,14 @@ void IceTransport::LogCallback(juice_log_level_t level, const char *message) {
 
 namespace rtc {
 
-IceTransport::IceTransport(const Configuration &config, Description::Role role,
-                           candidate_callback candidateCallback, state_callback stateChangeCallback,
+IceTransport::IceTransport(const Configuration &config, candidate_callback candidateCallback,
+                           state_callback stateChangeCallback,
                            gathering_state_callback gatheringStateChangeCallback)
-    : Transport(nullptr, std::move(stateChangeCallback)), mRole(role), mMid("0"),
-      mGatheringState(GatheringState::New), mCandidateCallback(std::move(candidateCallback)),
+    : Transport(nullptr, std::move(stateChangeCallback)), mRole(Description::Role::ActPass),
+      mMid("0"), mGatheringState(GatheringState::New),
+      mCandidateCallback(std::move(candidateCallback)),
       mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
-      mNiceAgent(nullptr, nullptr), mMainLoop(nullptr, nullptr) {
+      mNiceAgent(nullptr, nullptr), mMainLoop(nullptr, nullptr), mOutgoingDscp(0) {
 
 	PLOG_DEBUG << "Initializing ICE transport (libnice)";
 
@@ -526,12 +538,21 @@ Description IceTransport::getLocalDescription(Description::Type type) const {
 
 	std::unique_ptr<gchar[], void (*)(void *)> sdp(nice_agent_generate_local_sdp(mNiceAgent.get()),
 	                                               g_free);
-	return Description(string(sdp.get()), type, mRole);
+
+	// RFC 5763: The endpoint that is the offerer MUST use the setup attribute value of
+	// setup:actpass.
+	// See https://tools.ietf.org/html/rfc5763#section-5
+	return Description(string(sdp.get()), type,
+	                   type == Description::Type::Offer ? Description::Role::ActPass : mRole);
 }
 
 void IceTransport::setRemoteDescription(const Description &description) {
-	mRole = description.role() == Description::Role::Active ? Description::Role::Passive
-	                                                        : Description::Role::Active;
+	if (mRole == Description::Role::ActPass)
+		mRole = description.role() == Description::Role::Active ? Description::Role::Passive
+		                                                        : Description::Role::Active;
+	if (mRole == description.role())
+		throw std::logic_error("Incompatible roles with remote description");
+
 	mMid = description.bundleMid();
 	mTrickleTimeout = !description.ended() ? 30s : 0s;
 
@@ -547,12 +568,14 @@ bool IceTransport::addRemoteCandidate(const Candidate &candidate) {
 		return false;
 
 	// Warning: the candidate string must start with "a=candidate:" and it must not end with a
-	// newline, else libnice will reject it.
+	// newline or whitespace, else libnice will reject it.
 	string sdp(candidate);
 	NiceCandidate *cand =
 	    nice_agent_parse_remote_candidate_sdp(mNiceAgent.get(), mStreamId, sdp.c_str());
-	if (!cand)
+	if (!cand) {
+		PLOG_WARNING << "Rejected ICE candidate: " << sdp;
 		return false;
+	}
 
 	GSList *list = g_slist_append(nullptr, cand);
 	int ret = nice_agent_set_remote_candidates(mNiceAgent.get(), mStreamId, 1, list);
@@ -561,7 +584,9 @@ bool IceTransport::addRemoteCandidate(const Candidate &candidate) {
 	return ret > 0;
 }
 
-void IceTransport::gatherLocalCandidates() {
+void IceTransport::gatherLocalCandidates(string mid) {
+	mMid = std::move(mid);
+
 	// Change state now as candidates calls can be synchronous
 	changeGatheringState(GatheringState::InProgress);
 
@@ -598,6 +623,13 @@ bool IceTransport::send(message_ptr message) {
 }
 
 bool IceTransport::outgoing(message_ptr message) {
+	std::lock_guard lock(mOutgoingMutex);
+	if (mOutgoingDscp != message->dscp) {
+		mOutgoingDscp = message->dscp;
+		// Explicit Congestion Notification takes the least-significant 2 bits of the DS field
+		int ds = int(message->dscp << 2);
+		nice_agent_set_stream_tos(mNiceAgent.get(), mStreamId, ds); // ToS is the legacy name for DS
+	}
 	return nice_agent_send(mNiceAgent.get(), mStreamId, 1, message->size(),
 	                       reinterpret_cast<const char *>(message->data())) >= 0;
 }
@@ -736,15 +768,17 @@ void IceTransport::LogCallback(const gchar * /*logDomain*/, GLogLevelFlags logLe
 
 bool IceTransport::getSelectedCandidatePair(Candidate *local, Candidate *remote) {
 	NiceCandidate *niceLocal, *niceRemote;
-	if(!nice_agent_get_selected_pair(mNiceAgent.get(), mStreamId, 1, &niceLocal, &niceRemote))
+	if (!nice_agent_get_selected_pair(mNiceAgent.get(), mStreamId, 1, &niceLocal, &niceRemote))
 		return false;
 
 	gchar *sdpLocal = nice_agent_generate_local_candidate_sdp(mNiceAgent.get(), niceLocal);
-	if(local) *local = Candidate(sdpLocal, mMid);
+	if (local)
+		*local = Candidate(sdpLocal, mMid);
 	g_free(sdpLocal);
 
 	gchar *sdpRemote = nice_agent_generate_local_candidate_sdp(mNiceAgent.get(), niceRemote);
-	if(remote) *remote = Candidate(sdpRemote, mMid);
+	if (remote)
+		*remote = Candidate(sdpRemote, mMid);
 	g_free(sdpRemote);
 
 	if (local)
