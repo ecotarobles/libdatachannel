@@ -45,6 +45,8 @@ Cmdline::Cmdline (int argc, char *argv[]) // ISO C++17 not allowed: throw (std::
   {
     {"echo", no_argument, NULL, 'e'},
     {"noStun", no_argument, NULL, 'n'},
+    {"proxyServer", required_argument, NULL, 'p'},
+    {"proxyPort", required_argument, NULL, 'q'},
     {"stunServer", required_argument, NULL, 's'},
     {"stunPort", required_argument, NULL, 't'},
     {"webSocketServer", required_argument, NULL, 'w'},
@@ -58,6 +60,8 @@ Cmdline::Cmdline (int argc, char *argv[]) // ISO C++17 not allowed: throw (std::
   /* default values */
   _e = false;
   _n = false;
+  _s = "localhost";
+  _t = 8000;
   _s = "stun.l.google.com";
   _t = 19302;
   _w = "localhost";
@@ -65,7 +69,7 @@ Cmdline::Cmdline (int argc, char *argv[]) // ISO C++17 not allowed: throw (std::
   _h = false;
 
   optind = 0;
-  while ((c = getopt_long (argc, argv, "s:t:w:x:enh", long_options, &optind)) != - 1)
+  while ((c = getopt_long (argc, argv, "p:q:s:t:w:x:enh", long_options, &optind)) != - 1)
     {
       switch (c)
         {
@@ -75,6 +79,26 @@ Cmdline::Cmdline (int argc, char *argv[]) // ISO C++17 not allowed: throw (std::
 
         case 'n':
           _n = true;
+          break;
+
+        case 'p':
+          _p = optarg;
+          break;
+
+        case 'q':
+          _q = atoi (optarg);
+          if (_q < 0)
+            {
+              std::string err;
+              err += "parameter range error: q must be >= 0";
+              throw (std::range_error(err));
+            }
+          if (_q > 65535)
+            {
+              std::string err;
+              err += "parameter range error: q must be <= 65535";
+              throw (std::range_error(err));
+            }
           break;
 
         case 's':
@@ -146,12 +170,16 @@ void Cmdline::usage (int status)
   else
     {
       std::cout << "\
-usage: " << _program_name << " [ -enstwxh ] \n\
+usage: " << _program_name << " [ -enpqstwxh ] \n\
 libdatachannel client implementing WebRTC Data Channels with WebSocket signaling\n\
    [ -e ] [ --echo ] (type=FLAG)\n\
           Echo data channel messages back to sender rather than putting to stdout.\n\
    [ -n ] [ --noStun ] (type=FLAG)\n\
           Do NOT use a stun server (overrides -s and -t).\n\
+   [ -p ] [ --proxyServer ] (type=STRING, default=localhost)\n\
+          Proxy server IP address.\n\
+   [ -q ] [ --proxyPort ] (type=INTEGER, range=0...65535, default=8000)\n\
+          Proxy server port.\n\
    [ -s ] [ --stunServer ] (type=STRING, default=stun.l.google.com)\n\
           Stun server URL or IP address.\n\
    [ -t ] [ --stunPort ] (type=INTEGER, range=0...65535, default=19302)\n\

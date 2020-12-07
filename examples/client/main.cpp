@@ -61,17 +61,24 @@ int main(int argc, char **argv) try {
 	rtc::InitLogger(LogLevel::Info);
 
 	Configuration config;
-	string stunServer = "";
 	if (params->noStun()) {
 		cout << "No STUN server is configured. Only local hosts and public IP addresses supported."
 		     << endl;
 	} else {
+		string stunServer = "";
 		if (params->stunServer().substr(0, 5).compare("stun:") != 0) {
 			stunServer = "stun:";
 		}
 		stunServer += params->stunServer() + ":" + to_string(params->stunPort());
 		cout << "Stun server is " << stunServer << endl;
 		config.iceServers.emplace_back(stunServer);
+	}
+	if (params->proxyServer().compare("localhost") != 0) {
+		string proxyServer = "";
+		proxyServer = params->proxyServer() + ":" + to_string(params->proxyPort());
+		cout << "Proxy server is " << proxyServer << endl;
+		config.proxyServer.emplace(rtc::ProxyServer::Type::Http, params->proxyServer(),
+			params->proxyPort());
 	}
 
 	localToken = randomToken(4);

@@ -36,6 +36,8 @@ private:
   /* parameters */
   bool _e;
   bool _n;
+  std::string _p;
+  int _q;
   std::string _s;
   int _t;
   std::string _w;
@@ -59,6 +61,8 @@ public:
 
   bool echoDataChannelMessages () const { return _e; }
   bool noStun () const { return _n; }
+  std::string proxyServer () const { return _p; }
+  int proxyPort () const { return _q; }
   std::string stunServer () const { return _s; }
   int stunPort () const { return _t; }
   std::string webSocketServer () const { return _w; }
