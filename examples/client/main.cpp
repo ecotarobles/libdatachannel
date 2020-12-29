@@ -189,6 +189,9 @@ int main(int argc, char **argv) try {
 				cout << "Sending binary message over data channel!" << endl;
 				auto binaryData = randomData(256);
 				dc->send(binaryData, 256);
+				printf("binaryData[0] is %d, binaryData[1] is %d, binaryData[254] is %d and binaryData[255] is %d\n",
+					binaryData[0], binaryData[1], binaryData[254], binaryData[255]);
+				//cout << "binaryData[0] is " << binaryData[0] << ", binaryData[1] is " << binaryData[1] << ", binaryData[254] is " << binaryData[254] << " and binaryData[255] is " << binaryData[255] << endl;
 				delete[](binaryData);
 			}
 		});
@@ -312,6 +315,9 @@ shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
 		cout << "Sending binary message over data channel!" << endl;
 		auto binaryData = randomData(256);
 		dc->send(binaryData, 256);
+		printf("binaryData[0] is %d, binaryData[1] is %d, binaryData[254] is %d and binaryData[255] is %d\n",
+			binaryData[0], binaryData[1], binaryData[254], binaryData[255]);
+		//cout << "binaryData[0] is " << binaryData[0] << ", binaryData[1] is " << binaryData[1] << ", binaryData[254] is " << binaryData[254] << " and binaryData[255] is " << binaryData[255] << endl;
 		delete[](binaryData);
 
 		dataChannelMap.emplace(token, dc);
