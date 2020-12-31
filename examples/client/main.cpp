@@ -50,6 +50,7 @@ unordered_map<string, shared_ptr<DataChannel>> dataChannelMap;
 string localToken;
 bool echoDataChannelMessages = false;
 bool peerSession = false;
+string peerToken = "1234";
 bool skipNonMatchingIpAddresses = false;
 string webSocketIpAddr = "";
 
@@ -162,11 +163,28 @@ int main(int argc, char **argv) try {
 
 	while (true) {
 		string token;
-		cout << "Enter a remote ID to send an offer:" << endl;
+		cout << "Enter a remote ID to send an offer or 's' to send a packet:" << endl;
 		cin >> token;
 		cin.ignore();
-		if (token.empty())
-			break;
+		if (token.compare("s") == 0) {
+			auto search = dataChannelMap.find(peerToken);
+			if (search != dataChannelMap.end()) {
+				auto wdc = make_weak_ptr(search->second);
+				if (auto dc = wdc.lock()) {
+					cout << "Sending binary message over data channel!" << endl;
+					auto binaryData = randomData(256);
+					dc->send(binaryData, 256);
+					printf("binaryData[0] is %d, binaryData[1] is %d, binaryData[254] is %d and binaryData[255] is %d\n",
+						binaryData[0], binaryData[1], binaryData[254], binaryData[255]);
+					delete[](binaryData);
+				} else {
+					cout << "Could not get lock to send data" << endl;
+				}
+			} else {
+				cout << "No data channel" << endl;
+			}
+			continue;
+		}
 		if (token == localToken)
 			continue;
 
@@ -191,7 +209,6 @@ int main(int argc, char **argv) try {
 				dc->send(binaryData, 256);
 				printf("binaryData[0] is %d, binaryData[1] is %d, binaryData[254] is %d and binaryData[255] is %d\n",
 					binaryData[0], binaryData[1], binaryData[254], binaryData[255]);
-				//cout << "binaryData[0] is " << binaryData[0] << ", binaryData[1] is " << binaryData[1] << ", binaryData[254] is " << binaryData[254] << " and binaryData[255] is " << binaryData[255] << endl;
 				delete[](binaryData);
 			}
 		});
@@ -225,6 +242,7 @@ int main(int argc, char **argv) try {
 			}
 		});
 
+		cout << endl << "Enter a remote ID to send an offer or 's' to send a packet:" << endl;
 		dataChannelMap.emplace(token, dc);
 	}
 
@@ -317,9 +335,9 @@ shared_ptr<PeerConnection> createPeerConnection(const Configuration &config,
 		dc->send(binaryData, 256);
 		printf("binaryData[0] is %d, binaryData[1] is %d, binaryData[254] is %d and binaryData[255] is %d\n",
 			binaryData[0], binaryData[1], binaryData[254], binaryData[255]);
-		//cout << "binaryData[0] is " << binaryData[0] << ", binaryData[1] is " << binaryData[1] << ", binaryData[254] is " << binaryData[254] << " and binaryData[255] is " << binaryData[255] << endl;
 		delete[](binaryData);
 
+		cout << endl << "Enter a remote ID to send an offer or 's' to send a packet:" << endl;
 		dataChannelMap.emplace(token, dc);
 	});
 
